@@ -236,3 +236,51 @@
   - EvenlySpreadOutLocationPreferenceSlotSelectionStrategy（均衡策略），该策略考虑资源的均衡分配，会从满足条件的可用Slot集合中选择剩余资源最多的Slot，尽量让各个TaskManager均衡地承担计算压力
 - PreviousAllocationSlotSelectionStrategy（已分配Slot优先的选择策略），如果当前没有空闲的已分配Slot，则仍然会使用位置优先的策略来分配和申请Slot
 
+## 调度
+
+- SchedulerNG （调度器）
+
+  - 作用
+    1. 作业的生命周期管理（开始调度、挂起、取消）
+    2. 作业执行资源的申请、分配、释放
+    3. 作业状态的管理（发布过程中的状态变化、作业异常时的FailOver
+    4. 作业的信息提供，对外提供作业的详细信息
+  - 实现
+    1. DefaultScheduler（使用ScchedulerStrategy来实现）
+    2. LegacyScheduler（实际使用了原来的ExecutionGraph的调度逻辑）
+
+- SchedulingStrategy（调度策略）
+
+  1. startScheduling：调度入口，触发调度器的调度行为
+  2. restartTasks：重启执行失败的Task，一般是Task执行异常导致的
+  3. onExecutionStateChange：当Execution的状态发生改变时
+  4. onPartitionConsumable：当IntermediateResultParitititon中的数据可以消费时
+
+  - 实现
+    1. EagerSchelingStrategy（该调度策略用来执行流计算作业的调度）
+    2. LazyFromSourceSchedulingStrategy（该调度策略用来执行批处理作业的调度）
+
+- ScheduleMode（调度模式）
+
+  1. Eager调度（该模式适用于流计算。一次性申请需要所有的资源，如果资源不足，则作业启动失败。）
+  2. Lazy_From_Sources分阶段调度（适用于批处理。从Source Task开始分阶段调度，申请资源的时候，一次性申请本阶段所需要的所有资源。上游Task执行完毕后开始调度执行下游的Task，读取上游的数据，执行本阶段的计算任务，执行完毕之后，调度后一个阶段的Task，依次进行调度，直到作业执行完成）
+  3. Lazy_From_Sources_With_Batch_Slot_Request分阶段Slot重用调度（适用于批处理。与分阶段调度基本一样，区别在于该模式下使用批处理资源申请模式，可以在资源不足的情况下执行作业，但是需要确保在本阶段的作业执行中没有Shuffle行为）
+
+### 关键组件
+
+#### JobMaster
+
+1. 调度执行和管理（将JobGraph转化为ExecutionGraph，调度Task的执行，并处理Task的异常）
+   - InputSplit 分配
+   - 结果分区跟踪
+   - 作业执行异常
+2. 作业Slot资源管理
+3. 检查点与保存点
+4. 监控运维相关
+5. 心跳管理
+
+#### Task
+
+结构
+
+![image-20210530174007408](imges/image-20210530174007408.png)
