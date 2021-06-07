@@ -346,3 +346,72 @@ TwoPhaseCommitSinkFunction
 ### 关系图
 
 ![image-20210601085948136](imges/image-20210601085948136.png)
+
+## FLINK API
+
+### DataStrem JOIN
+
+#### Window JOIN
+
+```java
+stream.join(otherStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(<WindowAssigner>)
+    .apply(<JoinFunction>)
+```
+
+### Tumbling Window Join 
+
+```java
+DataStream<Integer> orangeStream = ...
+DataStream<Integer> greenStream = ...
+
+orangeStream.join(greenStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(TumblingEventTimeWindows.of(Time.milliseconds(2)))
+    .apply (new JoinFunction<Integer, Integer, String> (){
+        @Override
+        public String join(Integer first, Integer second) {
+            return first + "," + second;
+        }
+    });
+```
+
+### Sliding Window Join
+
+```java
+DataStream<Integer> orangeStream = ...
+DataStream<Integer> greenStream = ...
+
+orangeStream.join(greenStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(SlidingEventTimeWindows.of(Time.milliseconds(2) /* size */, Time.milliseconds(1) /* slide */))
+    .apply (new JoinFunction<Integer, Integer, String> (){
+        @Override
+        public String join(Integer first, Integer second) {
+            return first + "," + second;
+        }
+    });
+```
+
+### Session Window Join
+
+```java
+DataStream<Integer> orangeStream = ...
+DataStream<Integer> greenStream = ...
+
+orangeStream.join(greenStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(EventTimeSessionWindows.withGap(Time.milliseconds(1)))
+    .apply (new JoinFunction<Integer, Integer, String> (){
+        @Override
+        public String join(Integer first, Integer second) {
+            return first + "," + second;
+        }
+    });
+```
+
