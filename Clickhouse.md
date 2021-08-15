@@ -26,8 +26,6 @@
    systemctl disable firewalld				#关闭防火墙开机启动
    ```
 
-   
-
 2. CentOS取消打开文件数限制
 
    ```shell
@@ -44,16 +42,12 @@
    * hard nproc 131072
    ```
 
-   
-
 3. CentOS 取消 SELINUX  
 
    ```shell
     vim /etc/selinux/config
     SELINUX=disabled
    ```
-
-   
 
 4. 安装依赖
 
@@ -75,16 +69,12 @@
     rpm -qa|grep clickhouse 					#查看安装情况
    ```
 
-   
-
 3. 修改配置文件
 
    ```
     vim /etc/clickhouse-server/config.xml
     打开注释 <listen_host>::</listen_host>
    ```
-
-   
 
 4. 启动
 
@@ -527,4 +517,318 @@ alter table tableName modify column newcolname String;
 ```sql
 alter table tableName drop column newcolname;
 ```
+
+## 副本
+
+​	副本的目的主要是为了保障数据的高可用性，即使一台Clickhouse 节点宕机，那么也可以从其他服务器获取相同的数据。
+
+### 副本写入流程
+
+![image-20210815074101284](imges/image-20210815074101284.png)
+
+### 配置步骤
+
+1. 启动zookeeper集群
+
+2. 配置Clickhouse 下的Zookeeper集群地址，在/etc/clichouse-server/config.d 目录下创建metrika.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <yandex>
+   	<zookeeper-servers>
+   	<node index="1">
+   		<host>zookeeper1</host>
+   		<port>2181</port>
+   	</node>
+   	<node index="2">
+   		<host>zookeeper2</host>
+   		<port>2181</port>
+   	</node>
+   	<node index="3">
+   		<host>zookeeper3</host>
+   		<port>2181</port>
+   	</node>
+   </zookeeper-servers>
+   </yandex>
+   ```
+
+3. 修改config.xml 增加
+
+   ```xml
+   <zookeeper incl="zookeeper-servers" optional="true" />
+   <include_from>/etc/clickhouse-server/config.d/metrika.xml</include_from>
+   ```
+
+4. 同步集群其他机器
+
+5. 重启Clickhouse 集群
+
+#### 建表语句
+
+```sql
+create table t_order_rep2 (
+	id UInt32,
+	sku_id String,
+	total_amount Decimal(16,2),
+	create_time Datetime
+) engine =ReplicatedMergeTree('/clickhouse/table/01/t_order_rep','rep_102')
+partition by toYYYYMMDD(create_time)
+primary key (id)
+order by (id,sku_id);
+```
+
+ReplicatedMergeTree 参数：
+
+1. 参数一分片zk_path 一般按照：/clickhouse/database/table/{shard}/{table_name}的格式
+2. 参数二副本名名称，相同的分片副本名称不能相同
+
+## 分片集群
+
+​	副本解决了数据的高可用性，降低丢失的风险，无法解决数据的横向扩容。Clickhouse通过数据分片解决数据的水平切分问题，再通过Distributed 表把数据拼接在一起使用。Distributed 表引擎本身不存储数据。
+
+### 集群写入流程
+
+![image-20210815075705962](imges/image-20210815075705962.png)
+
+### 集群读取流程
+
+![image-20210815075820139](imges/image-20210815075820139.png)
+
+## Explain 查看执行计划
+
+​	在 clickhouse 20.6 版本之前要查看 SQL 语句的执行计划需要设置日志级别为 trace 才能可以看到，并且只能真正执行 sql，在执行日志里面查看。在 20.6 版本引入了原生的执行计划的语法。
+
+### 基本语法
+
+```sql
+EXPLAIN [AST | SYNTAX | PLAN | PIPELINE] [setting = value, ...] 
+SELECT ... [FORMAT ...]
+```
+
+- PLAN : 用于查看执行计划，默认值
+  - header: 打印计划中各个步骤的head说明，默认关闭，默认值0
+  - description:打印计划中各个步骤的描述，默认开启，默认值1
+  - actions：打印计划中各个步骤的详细信息，默认关闭，默认值0
+- AST：用于查看语法树
+- SYNTAX:用于优化语法
+- PIPELINE: 用于查看PIPELINE 计划
+  - header: 打印计划中各个步骤的head说明，默认关闭
+  - graph: 用DOT图形语言描述管道图，默认关闭，需要查看相关的图形配合graphviz 查看
+  - actions: 如果开启了graph，紧凑打印，默认开启
+
+## 建表优化
+
+### 数据类型
+
+#### 时间字段类型
+
+​	虽然 ClickHouse 底层将 DateTime 存储为时间戳 Long 类型，但不建议存储 Long 类型，因为 DateTime 不需要经过函数转换处理，执行效率高、可读性好。
+
+#### 空值存储类型
+
+​	官方已经指出 **Nullable** **类型几乎总是会拖累性能**，因为存储 Nullable 列时需要创建一个额外的文件来存储 NULL 的标记，并且 Nullable 列无法被索引。
+
+```sql
+CREATE TABLE t_null(x Int8, y Nullable(Int8)) ENGINE TinyLog;
+```
+
+### 分区和索引
+
+​	一般选择**按天分区**，也可以指定为 Tuple()，以单表一亿数据为例，分区大小控制在 10-30 个为最佳。
+
+​	必须指定索引列，ClickHouse 中的索引列即排序列，通过 order by 指定，一般在查询条件中经常被用来充当筛选条件的属性被纳入进来；可以是单一维度，也可以是组合维度的索引；通常需要满足高级列在前、查询频率大的在前原则；还有基数特别大的不适合做索引列，如用户表的 userid 字段；通常**筛选后的数据满足在百万以内为最佳**。
+
+### 表参数
+
+​	Index_granularity 是用来控制索引粒度的，默认是 8192，如非必须不建议调整。
+
+如果表中不是必须保留全量历史数据，建议指定 TTL（生存时间值），可以免去手动过期历史数据的麻烦，TTL 也可以通过 alter table 语句随时修改。
+
+### 写入删除优化
+
+1. 尽量不要执行单条或小批量删除和插入操作，这样会产生小分区文件，给后台Merge 任务带来巨大压力
+2. 不要一次写入太多分区，或数据写入太快，数据写入太快会导致 Merge 速度跟不上而报错，一般建议每秒钟发起 2-3 次写入操作，每次操作写入 2w~5w 条数（依服务器性能而定）
+
+### 常见配置
+
+#### CPU资源
+
+|                   配置                    |                             描述                             |
+| :---------------------------------------: | :----------------------------------------------------------: |
+|           background_pool_size            | 后台线程池的大小，merge线程就是在该线程池中执行，但是该线程池不仅仅是该merge线程用的，默认值16，允许的前提下改成CPU核数的2倍（线程数） |
+|       background_schedule_pool_size       | 执行后台任务（复制表、Kafka流、DNS缓存更新）的线程数。默认128，建议改成CPU核数的2倍 |
+| background_distributed_schedule_pool_size | 设置为分布式发送执行后台任务的线程数，默认 16，建议改成 cpu个数的2倍 |
+|          max_concurrent_queries           | 最大并发处理的请求数(包含 select,insert 等)，默认值 100，推荐 150～300 |
+|                max_threads                |       设置单个查询所能使用的最大CPU个数，默认是CPU核数       |
+
+#### 内存资源
+
+|                配置                |                             描述                             |
+| :--------------------------------: | :----------------------------------------------------------: |
+|          max_memory_usage          | 此参数在 users.xml 中,表示单次 Query 占用内存最大值，该值可以设置的比较大，这样可以提升集群查询的上限。保留一点给 OS，比如 128G 内存的机器，设置为 100GB。 |
+| max_bytes_before_external_group_by | 一般按照 max_memory_usage 的一半设置内存，当 group 使用内存超过阈值后会刷新到磁盘进行。因为 clickhouse 聚合分两个阶段：查询并及建立中间数据、合并中间数据，结合上一项，建议 50GB。 |
+|   max_bytes_before_external_sort   | 当 order by 已使用 max_bytes_before_external_sort 内存就进行溢写磁盘(基于磁盘排序)，如果不设置该值，那么当内存不够时直接抛错，设置了该值 order by 可以正常完成，但是速度相对存内存来说肯定要慢点(实测慢的非常多，无法接受)。 |
+|       max_table_size_to_drop       | 此参数在 config.xml 中，应用于需要删除表或分区的情况，默认是50GB，意思是如果删除 50GB 以上的分区表会失败。建议修改为 0，这样不管多大的分区表都可以删除。 |
+
+#### 存储
+
+​	ClickHouse 不支持设置多数据目录，为了提升数据 io 性能，可以挂载虚拟券组，一个券组绑定多块物理磁盘提升读写性能，多数据查询场景 SSD 会比普通机械硬盘快 2-3 倍。
+
+## Clickhouse 语法优化规则
+
+​	clickhouse 的SQL 优化规则是基于RBO（Rule Based Optimization）
+
+### Count 优化
+
+​	在调用Count 函数时，如果使用的是count()或者Count(*) ，并且没有Where 条件，则会直接使用system.tables 的total_rows。如果Count具体的字段则不会使用此向优化。
+
+### 消除子查询重复字段
+
+​	子查询中包含相同的字段会直接删除，即使重命名也会如此
+
+### 谓词下推
+
+​	当 group by 有 having 子句，但是没有 with cube、with rollup 或者 with totals 修饰的时候，having 过滤会下推到 where 提前过滤。
+
+### 聚合计算外推
+
+​	聚合函数内的计算会外推，例如
+
+```sql
+EXPLAIN SYNTAX
+SELECT sum(UserID * 2)
+FROM visits_v1
+#返回优化后的语句
+SELECT sum(UserID) * 2
+FROM visits_v1
+```
+
+### 聚合函数消除
+
+​	如果对聚合键，也就是 group by key 使用 min、max、any 聚合函数，则将函数消除
+
+### 删除重复的 Order by key
+
+```sql
+EXPLAIN SYNTAX
+SELECT *
+FROM visits_v1
+ORDER BY
+UserID ASC,
+UserID ASC,
+VisitID ASC,
+VisitID ASC
+#返回优化后的语句：
+select
+……
+FROM visits_v1
+ORDER BY 
+UserID ASC,
+VisitID ASC
+```
+
+### 删除重复的 Limit by key
+
+```sql
+EXPLAIN SYNTAX
+SELECT *
+FROM visits_v1
+LIMIT 3 BY
+VisitID,
+VisitID
+LIMIT 10
+#返回优化后的语句：
+select
+……
+FROM visits_v1
+LIMIT 3 BY VisitID
+LIMIT 10
+```
+
+### 删除重复的Using key
+
+```sql
+EXPLAIN SYNTAX
+SELECT
+a.UserID,
+a.UserID,
+b.VisitID,
+a.URL,
+b.UserID
+FROM hits_v1 AS a
+LEFT JOIN visits_v1 AS b USING (UserID, UserID)
+#返回优化后的语句：
+SELECT 
+UserID,
+UserID,
+VisitID,
+URL,
+b.UserID
+FROM hits_v1 AS a
+ALL LEFT JOIN visits_v1 AS b USING (UserID)
+```
+
+### 标量替换
+
+​		如果子查询只返回一行数据，在被引用的时候用标量替换
+
+### 三元运算优化
+
+​		如果开启了 optimize_if_chain_to_multiif 参数，三元运算符会被替换成 multiIf 函数
+
+## 查询优化
+
+### 单表查询优化
+
+#### Prewhere代替Where
+
+​	Prewhere 和 where 语句的作用相同，用来过滤数据。不同之处在于 prewhere 只支持*MergeTree 族系列引擎的表，首先会读取指定的列数据，来判断数据过滤，等待数据过滤之后再读取 select 声明的列字段来补全其余属性。
+
+​	当查询列明显多于筛选列时使用 Prewhere 可十倍提升查询性能，Prewhere 会自动优化执行过滤阶段的数据读取方式，降低 io 操作。
+
+​	默认情况，我们肯定不会关闭 where 自动优化成 prewhere，但是某些场景即使开启优化，也不会自动转换成 prewhere，需要手动指定 prewhere：
+
+- 使用常量表达式
+- 使用默认值为alias类型的字段
+- 包含了arrayJOIN，globalIn,globalNotIn或者indexHint的查询
+- select查询的列字段和where的谓词相同
+- 使用了主键字段
+
+#### 数据采样
+
+​	采样修饰符只有在 MergeTree engine 表中才有效，且在创建表时需要指定采样策略。
+
+```sql
+#建表指定采样策略
+CREATE TABLE datasets.hits_v1 (
+ ......
+ ) ENGINE = MergeTree() 
+PARTITION BY toYYYYMM(EventDate) 
+ORDER BY (CounterID, EventDate, intHash32(UserID)) 
+SAMPLE BY intHash32(UserID) 
+SETTINGS index_granularity = 8192;
+#查询使用采样功能
+SELECT Title,count(*) AS PageViews 
+FROM hits_v1
+SAMPLE 0.1 #代表采样 10%的数据,也可以是具体的条数
+WHERE CounterID =57
+GROUP BY Title
+ORDER BY PageViews DESC LIMIT 1000
+```
+
+#### 列裁剪与分区裁剪
+
+​	数据量太大时应避免使用 select * 操作，查询的性能会与查询的字段大小和数量成线性表换，字段越少，消耗的 io 资源越少，性能就会越高。
+
+#### Order by 结合 Where 、limit
+
+​	千万以上数据集进行 order by 查询时需要搭配 where 条件和 limit 语句一起使用。
+
+#### 避免构建虚拟列
+
+​	如非必须，不要在结果集上构建虚拟列，虚拟列非常消耗资源浪费性能，可以考虑在前端进行处理，或者在表中构造实际字段进行额外存储。
+
+#### uniqCombined 代替 distinct
+
+​	性能可提升 10 倍以上，uniqCombined 底层采用类似 HyperLogLog 算法实现，能接收 2%左右的数据误差，可直接使用这种去重方式提升查询性能。Count(distinct )会使用 uniqExact精确去重。
 
