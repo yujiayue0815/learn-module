@@ -832,3 +832,104 @@ ORDER BY PageViews DESC LIMIT 1000
 
 ​	性能可提升 10 倍以上，uniqCombined 底层采用类似 HyperLogLog 算法实现，能接收 2%左右的数据误差，可直接使用这种去重方式提升查询性能。Count(distinct )会使用 uniqExact精确去重。
 
+### 多表关联
+
+#### IN 代替 JOIN
+
+​	多表联查时，查询的数据仅从一张表出时，可以考虑IN操作而不是JOIN
+
+#### 大小表JOIN
+
+​	多表JOIN 时要满足小表在右的原则，右表关联时被加载到内存中与左表进行比较，Clickhouse中无论是LeftJoin 、RightJoin还是Inner Join 永远都是拿着右表中的每一条记录到左表中查找该记录是否存在，所以右表必须是小表。
+
+#### 注意谓词下推
+
+​	ClickHouse 在 join 查询时不会主动发起谓词下推的操作，需要每个子查询提前完成过滤操作，需要注意的是，是否执行谓词下推，对性能影响差别很大（新版本中已经不存在此问题，但是需要注意谓词的位置的不同依然有性能的差异）
+
+#### 分布式表使用GLOBAL
+
+ 	两张分布式表上的IN和JOIN之前必须加上GLOBAL关键字，右表只会在接收查询请求的那个节点查询一次，并将其分发到其他节点上。如果不加GLOBAL关键字的话，每个节点都会单独发起一次对右表的查询，而右表又是一个分布式表，就导致右表一共被查询了N^2次（N代表分布式表的分片数量），这就是查询被放大，会带来很大的开销。
+
+#### 使用字典表
+
+​	将一些需要关联分析的业务创建成字典表进行 join 操作，前提是字典表不宜太大，因为字典表会常驻内存
+
+#### 提前过滤
+
+​	通过增加逻辑过滤可以减少数据扫描，达到提高执行速度及降低内存消耗的目的
+
+## 数据一致性
+
+​	Clickhouse 中即便是数据一致性支持最好的MergeTree ，也只是保证最终一致性
+
+![image-20210815200601700](imges/image-20210815200601700.png)
+
+### 解决方案
+
+#### 手动 OPTIMIZE
+
+```sql
+OPTIMIZE TABLE test_a FINAL;
+
+# 语法：
+OPTIMIZE TABLE [db.]name [ON CLUSTER cluster] [PARTITION partition | PARTITION ID 'partition_id'] [FINAL] [DEDUPLICATE [BY expression]]
+```
+
+#### 通过Group by 去重
+
+```sql
+SELECT
+user_id ,
+argMax(score, create_time) AS score, 
+argMax(deleted, create_time) AS deleted,
+max(create_time) AS ctime 
+FROM test_a 
+GROUP BY user_id
+HAVING deleted = 0;
+```
+
+argMax(filed1,filed2): 按照filed2的最大值取filed1的值
+
+#### 通过 FINAL 查询
+
+​	在查询语句后增加 FINAL 修饰符，这样在查询的过程中将会执行 Merge 的特殊逻辑（例如数据去重，预聚合等）。但是这种方法在早期版本基本没有人使用，因为在增加 FINAL 之后，我们的查询将会变成一个单线程的执行过程，查询速度非常慢。在 v20.5.2.7-stable 版本中，FINAL 查询支持多线程执行，并且可以通过 max_final_threads 参数控制单个查询的线程数。但是目前读取 part 部分的动作依然是串行的。
+
+## 物化视图
+
+​	ClickHouse 的物化视图是一种查询结果的持久化，它确实是给我们带来了查询效率的提升。用户查起来跟表没有区别，它就是一张表，它也像是一张时刻在预计算的表，创建的过程它是用了一个特殊引擎，加上后来 as select，就是 create 一个 table as select 的写法。“查询结果集”的范围很宽泛，可以是基础表中部分数据的一份简单拷贝，也可以是多表 join 之后产生的结果或其子集，或者原始数据的聚合指标等等。所以，物化视图不会随着基础表的变化而变化，所以它也称为快照（snapshot） 
+
+### 物化视图和普通视图的区别
+
+​	**普通视图不保存数据，保存的仅仅是查询语句**，查询的时候还是从原表读取数据，可以将普通视图理解为是个子查询。**物化视图则是把查询的结果根据相应的引擎存入到了磁盘或内存中**，对数据重新进行了组织，你可以理解物化视图是完全的一张新表。
+
+### 优缺点
+
+优点：查询速度**快**，要是把物化视图这些规则全部写好，它比原数据查询快了很多，总的行数少了，因为都预计算好了。
+
+缺点：它的本质是一个流式数据的使用场景，是累加式的技术，所以要用历史数据做去重、去核这样的分析，在物化视图里面是不太好用的。在某些场景的使用也是有限的。而且如果一张表加了好多物化视图，在写这张表的时候，就会消耗很多机器的资源，比如数据带宽占满、存储一下子增加了很多
+
+### 基本语法
+
+```sql
+CREATE [MATERIALIZED] VIEW [IF NOT EXISTS] [db.]table_name [TO[db.]name] [ENGINE = engine] [POPULATE] AS SELECT ...
+```
+
+#### 创建物化视图的限制
+
+- 必须指定物化视图的 engine 用于数据存储
+- TO [db].[table]语法的时候，不得使用 POPULATE。
+- 查询语句(select）可以包含下面的子句： DISTINCT, GROUP BY, ORDER BY, LIMIT…
+- 物化视图的 alter 操作有些限制，操作起来不大方便。
+- 若物化视图的定义使用了 TO [db.]name 子语句，则可以将目标表的视图 卸载DETACH 再装载 ATTACH 
+
+#### 物化视图的数据更新
+
+- 物化视图创建好之后，若源表被写入新数据则物化视图也会同步更新
+- POPULATE 关键字决定了物化视图的更新策略：
+  - 若有 POPULATE 则在创建视图的过程会将源表已经存在的数据一并导入，类似于create table ... as
+  - 若无 POPULATE 则物化视图在创建之后没有数据，只会在创建只有同步之后写入源表的数据
+  - clickhouse 官方并不推荐使用 POPULATE，因为在创建物化视图的过程中同时写入的数据不能被插入物化视图。
+- 物化视图不支持同步删除，若源表的数据不存在（删除了）则物化视图的数据仍然保留
+- 物化视图是一种特殊的数据表，可以用 show tables 查看
+- 物化视图数据的删除
+- 物化视图的删除
