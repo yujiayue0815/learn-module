@@ -147,6 +147,28 @@ bin/pulsar-client consume my-topic -s "first-subscription" # consume message
 
 ![image-20210902221639357](imges/image-20210902221639357.png)
 
+### 3.4 Topic 结构图
+
+![image-20210910150853590](imges/image-20210910150853590.png)
+
+#### 3.4.1 简介
+
+​	一个Topic实际上是一个ledgers流。Ledgers追加到一个Topic，条目(消息或者一组消息)追加到Ledgers。Ledger一旦关闭是不可变的。Ledger作为最小的删除单元，也就是说我们不能删除单个条目而是去删除整个Ledger。Ledgers本身也被分解为多个Fragment。Fragment是BookKeeper集群中最小的分布单元。
+
+​	Topic是Pulsar中的概念。Ledger和Fragment是BookKeeper中的概念，尽管Pulsar知道且使用Ledgers和Fragment。
+
+#### 3.4.2 重要参数
+
+- #### Ensemble Size (E) : 创建Ledger 时使用的Brokie的数量
+
+- #### Write Quorum Size (QW)：每条消息存储的副本的数量
+
+- #### Ack Quorum Size (Qa) : 消息复制成功的ACK 数量
+
+### 3.5 读写流程图
+
+![image-20210910155310658](imges/image-20210910155310658.png)
+
 ## Message
 
 ## 结构
