@@ -89,3 +89,46 @@
 10001010>>>3=00010001
 ```
 
+# 第二章
+
+## 2.1 数组基本知识
+
+略
+
+## 2.2 双指针
+
+**含义**：
+
+​	使用两个相反方向或者相同方向的指针扫描数组。
+
+​	方向相反的双指针经常用来求排序数组中的两个数字之和，P1指向数组中的第一个数字，P2指向数组中的最后一个数字，两个指针指向的数字之和大于目标值，则P2向左移动；如果小于目标值这P1指针向右移动，两个指针的移动方向是相反的；方向相同的双指针通常用来求正数数组中的和或乘积。
+
+​	方向相同的双指针通常用来求正数数组中子数组的和或者乘积，初始化的时候两个指针P1和P2都指向数组的第1个数字。如果两个指针之间的子数组的和或乘积大于目标值，则向右移动指针P1删除子数组最左边的数字；如果两个指针之间的子数组的和或乘积小于目标值，则向右移动指针P2在子数组的右边增加新的数字。此时两个指针的移动方向是相同的。
+
+```java
+ /**
+     * 题目：寻找有序数组中目标值的数组下标，数组中的每个元素只能使用一次
+     *
+     * @param data   有序数组
+     * @param target 目标值
+     * @return 结果为目标值的数组下标
+     */
+    public int[] twoSum(int[] data, int target) {
+        if (data == null || data.length == 0)
+            return null;
+        if (data.length == 1)
+            return data[0] == target ? new int[]{0} : null;
+        int leftIndex = 0;
+        int rightIndex = data.length - 1;
+        while (leftIndex < rightIndex) {
+            if (data[leftIndex] + data[rightIndex] < target)
+                leftIndex++;
+            else if (data[leftIndex] + data[rightIndex] > target)
+                rightIndex--;
+            else
+                break;
+        }
+        return new int[]{leftIndex, rightIndex};
+    }
+```
+

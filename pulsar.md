@@ -169,6 +169,141 @@ bin/pulsar-client consume my-topic -s "first-subscription" # consume message
 
 ![image-20210910155310658](imges/image-20210910155310658.png)
 
+## 4. Pulsar Funtion & IO 
+
+### 4.1 简介
+
+**Pulsar Functions** 是轻量级计算流程，具有以下特点：
+
+- 从一个或多个 Pulsar topic 中消费消息；
+
+- 将用户提供的处理逻辑应用于每条消息；
+
+- 将运行结果发布到另一个 topic。
+
+  ![image-20210914165808295](imges/image-20210914165808295.png)
+
+**Pulsar IO** 包含了Source 和 Sink 提供了Pulsar 和外部组件进行对接的能力，使之能够轻松同外部系统结合使用
+
+![image-20210914162702093](imges/image-20210914162702093.png)
+
+### 4.2 案例
+
+#### 4.2.1 Function Case
+
+```shell
+bin/pulsar-admin functions create \
+  --jar ./examples/api-examples.jar \
+  --classname org.apache.pulsar.functions.api.examples.WordCountFunction \
+  --tenant public \
+  --namespace default \
+  --name word-count \
+  --inputs persistent://public/default/sentences \
+  --output persistent://public/default/count
+```
+
+
+
+#### 4.2.2 IO Case
+
+1. 创建配置文件
+
+   ```yaml
+   # create source-kafka.yaml
+   configs:
+      bootstrapServers: "192.168.119.2:9092"
+      groupId: "test-pulsar-io"
+      topic: "test_topic"
+      sessionTimeoutMs: "10000"
+      autoCommitEnabled: "false
+   ```
+
+2. 下载以来包
+
+   ```
+   pulsar-io-kafka-2.8.0.nar
+   kafka-clients-2.8.0.jar
+   ```
+
+3. 启动Sources
+
+   ```shell
+   ./bin/pulsar-admin source create \
+   --archive ./lib/pulsar-io-kafka-2.8.0.nar \
+   --classname org.apache.pulsar.io.kafka.KafkaBytesSource \
+   --tenant jiayue-tenant \
+   --namespace dplus \
+   --name kafka \
+   --destination-topic-name my-topic \
+   --source-config-file ./instances/kafka/kafka-source-config.yaml \
+   --parallelism 1
+   ```
+
+4. 客户端查看
+
+   ```shell
+   pulsarctl sources list --tenant jiayue-tenant --namespace dplus
+   ```
+
+### 4.3 问题
+
+- 异常信息&解决
+
+  ```tex
+  异常日志：
+  11:16:32.878 [pulsar-web-40-4] WARN  org.eclipse.jetty.server.HttpChannelState - unhandled due to prior sendError
+  javax.servlet.ServletException: javax.servlet.ServletException: java.lang.UnsupportedOperationException: Pulsar Function Worker is not enabled, probably functionsWorkerEnabled is set to false
+  	at org.eclipse.jetty.server.handler.HandlerCollection.handle(HandlerCollection.java:162) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.StatisticsHandler.handle(StatisticsHandler.java:179) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.HandlerWrapper.handle(HandlerWrapper.java:127) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.Server.handle(Server.java:516) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.HttpChannel.lambda$handle$1(HttpChannel.java:388) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.HttpChannel.dispatch(HttpChannel.java:633) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.HttpChannel.handle(HttpChannel.java:380) [org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.HttpConnection.onFillable(HttpConnection.java:277) [org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.io.AbstractConnection$ReadCallback.succeeded(AbstractConnection.java:311) [org.eclipse.jetty-jetty-io-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.io.FillInterest.fillable(FillInterest.java:105) [org.eclipse.jetty-jetty-io-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.io.ChannelEndPoint$1.run(ChannelEndPoint.java:104) [org.eclipse.jetty-jetty-io-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.util.thread.strategy.EatWhatYouKill.runTask(EatWhatYouKill.java:338) [org.eclipse.jetty-jetty-util-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.util.thread.strategy.EatWhatYouKill.doProduce(EatWhatYouKill.java:315) [org.eclipse.jetty-jetty-util-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.util.thread.strategy.EatWhatYouKill.tryProduce(EatWhatYouKill.java:173) [org.eclipse.jetty-jetty-util-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.util.thread.strategy.EatWhatYouKill.run(EatWhatYouKill.java:131) [org.eclipse.jetty-jetty-util-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.util.thread.ReservedThreadExecutor$ReservedThread.run(ReservedThreadExecutor.java:383) [org.eclipse.jetty-jetty-util-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1149) [?:1.8.0_301]
+  	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624) [?:1.8.0_301]
+  	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30) [io.netty-netty-common-4.1.63.Final.jar:4.1.63.Final]
+  	at java.lang.Thread.run(Thread.java:748) [?:1.8.0_301]
+  Caused by: javax.servlet.ServletException: java.lang.UnsupportedOperationException: Pulsar Function Worker is not enabled, probably functionsWorkerEnabled is set to false
+  	at org.glassfish.jersey.servlet.WebComponent.serviceImpl(WebComponent.java:410) ~[org.glassfish.jersey.containers-jersey-container-servlet-core-2.34.jar:?]
+  	at org.glassfish.jersey.servlet.WebComponent.service(WebComponent.java:346) ~[org.glassfish.jersey.containers-jersey-container-servlet-core-2.34.jar:?]
+  	at org.glassfish.jersey.servlet.ServletContainer.service(ServletContainer.java:366) ~[org.glassfish.jersey.containers-jersey-container-servlet-core-2.34.jar:?]
+  	at org.glassfish.jersey.servlet.ServletContainer.service(ServletContainer.java:319) ~[org.glassfish.jersey.containers-jersey-container-servlet-core-2.34.jar:?]
+  	at org.glassfish.jersey.servlet.ServletContainer.service(ServletContainer.java:205) ~[org.glassfish.jersey.containers-jersey-container-servlet-core-2.34.jar:?]
+  	at org.eclipse.jetty.servlet.ServletHolder.handle(ServletHolder.java:799) ~[org.eclipse.jetty-jetty-servlet-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.servlet.ServletHandler$ChainEnd.doFilter(ServletHandler.java:1626) ~[org.eclipse.jetty-jetty-servlet-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.apache.pulsar.broker.web.ResponseHandlerFilter.doFilter(ResponseHandlerFilter.java:65) ~[org.apache.pulsar-pulsar-broker-2.8.0.jar:2.8.0]
+  	at org.eclipse.jetty.servlet.FilterHolder.doFilter(FilterHolder.java:193) ~[org.eclipse.jetty-jetty-servlet-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.servlet.ServletHandler$Chain.doFilter(ServletHandler.java:1601) ~[org.eclipse.jetty-jetty-servlet-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.servlet.ServletHandler.doHandle(ServletHandler.java:548) ~[org.eclipse.jetty-jetty-servlet-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ScopedHandler.nextHandle(ScopedHandler.java:233) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.session.SessionHandler.doHandle(SessionHandler.java:1624) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ScopedHandler.nextHandle(ScopedHandler.java:233) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ContextHandler.doHandle(ContextHandler.java:1435) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ScopedHandler.nextScope(ScopedHandler.java:188) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.servlet.ServletHandler.doScope(ServletHandler.java:501) ~[org.eclipse.jetty-jetty-servlet-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.session.SessionHandler.doScope(SessionHandler.java:1594) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ScopedHandler.nextScope(ScopedHandler.java:186) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ContextHandler.doScope(ContextHandler.java:1350) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ScopedHandler.handle(ScopedHandler.java:141) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.ContextHandlerCollection.handle(ContextHandlerCollection.java:234) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	at org.eclipse.jetty.server.handler.HandlerCollection.handle(HandlerCollection.java:146) ~[org.eclipse.jetty-jetty-server-9.4.42.v20210604.jar:9.4.42.v20210604]
+  	... 19 more
+  解决方式：
+  functionsWorkerEnabled=true  #修改配置文件 broker.conf
+  ```
+
+  
+
 ## Message
 
 ## 结构
